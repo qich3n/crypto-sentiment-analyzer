@@ -1,8 +1,6 @@
 package services
 
-import (
-	"strings"
-)
+import "strings"
 
 // Enhanced sentiment keywords with weighted scores
 var sentimentKeywords = map[string]int{
@@ -19,6 +17,24 @@ var sentimentKeywords = map[string]int{
 	"resistance": -2, "panic": -4, "correction": -2, "decline": -3,
 	"fall": -3, "falling": -3, "red": -2, "negative": -2, "weak": -2,
 	"exit": -2, "fear": -3, "bubble": -3, "overvalued": -3, "risky": -2,
+
+	// Crypto slang (mixed sentiment)
+	"rekt":  -3,
+	"fomo":  2,
+	"fud":   -3,
+	"lambo": 3,
+	"bag":   -1,
+}
+
+// negationWords invert the following sentiment for a short window
+var negationWords = map[string]bool{
+	"not": true, "no": true, "never": true, "dont": true, "don't": true,
+	"cant": true, "can't": true, "isnt": true, "isn't": true,
+}
+
+// intensifierWords amplify the following sentiment for a short window
+var intensifierWords = map[string]float64{
+	"very": 1.5, "extremely": 1.8, "super": 1.4, "so": 1.3, "really": 1.3,
 }
 
 // CalculateSentiment calculates sentiment score based on keyword analysis with weighted scoring
@@ -34,12 +50,53 @@ func CalculateSentiment(redditData []string) float64 {
 		postScore := 0
 		words := strings.Fields(strings.ToLower(post))
 
+		negateWindow := 0        // how many upcoming sentiment words to negate
+		intensityWindow := 0     // how many upcoming sentiment words to intensify
+		currentMultiplier := 1.0 // current intensity multiplier
+
 		// Analyze each word in the post
 		for _, word := range words {
-			// Remove common punctuation
+			// Remove common punctuation and normalize basic contractions
 			word = strings.Trim(word, ".,!?;:()[]{}\"'")
 
-			if score, exists := sentimentKeywords[word]; exists {
+			// Handle negations (e.g., "not bullish", "don't buy")
+			if negationWords[word] {
+				negateWindow = 3 // affect the next few sentiment-bearing words
+				continue
+			}
+
+			// Handle intensifiers (e.g., "very bullish", "extremely bearish")
+			if mult, ok := intensifierWords[word]; ok {
+				intensityWindow = 2
+				currentMultiplier = mult
+				continue
+			}
+
+			// Look up sentiment for this word
+			if baseScore, exists := sentimentKeywords[word]; exists {
+				score := baseScore
+
+				// Apply negation if active
+				if negateWindow > 0 {
+					score = -score
+					negateWindow--
+				}
+
+				// Apply intensity if active
+				if intensityWindow > 0 {
+					// simple integer scaling to keep scores manageable
+					scaled := float64(score) * currentMultiplier
+					if scaled > 0 {
+						score = int(scaled + 0.5)
+					} else {
+						score = int(scaled - 0.5)
+					}
+					intensityWindow--
+					if intensityWindow == 0 {
+						currentMultiplier = 1
+					}
+				}
+
 				postScore += score
 			}
 		}
